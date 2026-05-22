@@ -1,0 +1,259 @@
+#!/bin/bash
+#SBATCH -q primary
+#SBATCH --job-name=igv_snapshot
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --mem=20gb
+#SBATCH --time=06:00:00
+#SBATCH --array=1-100%5
+#SBATCH --output=igv_snapshot_%A_%a.out
+#SBATCH --error=igv_snapshot_%A_%a.err
+
+set -euo pipefail
+
+############################################################
+# IGV Batch Screenshot Script for Slurm/HPC
+#
+# Purpose:
+#   Generates IGV screenshots for multiple BAM files using
+#   a Slurm array job.
+#
+# Notes:
+#   - Keep the array throttle low, e.g. %5, because too many
+#     simultaneous IGV jobs can crash or silently fail.
+#   - This script uses manual Xvfb instead of xvfb-run because
+#     manual display handling is often more stable on clusters.
+#   - Each task processes one sample from SAMPLE_LIST.
+############################################################
+
+
+############################################################
+# 1. Go to project directory
+############################################################
+
+cd /path/to/project_directory
+
+
+############################################################
+# 2. Load required modules
+############################################################
+
+module purge
+module load gnu7
+module load samtools
+module load igv/2.16.0
+
+
+############################################################
+# 3. Define input sample list
+#
+# SAMPLE_LIST should contain one sample ID per line.
+# Example:
+#   SAMPLE_001
+#   SAMPLE_002
+#   SAMPLE_003
+############################################################
+
+SAMPLE_LIST=/path/to/sample_list.txt
+SAMPLE=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$SAMPLE_LIST" | tr -d '\r')
+
+echo "======================================"
+echo "Running IGV snapshot for: $SAMPLE"
+echo "Array task: $SLURM_ARRAY_TASK_ID"
+echo "======================================"
+
+
+############################################################
+# 4. Exit safely if no sample is found for this task
+############################################################
+
+if [ -z "$SAMPLE" ]; then
+    echo "No sample found for task $SLURM_ARRAY_TASK_ID"
+    exit 0
+fi
+
+
+############################################################
+# 5. Define paths
+#
+# REFERENCE:
+#   FASTA file used as the IGV genome/reference.
+#
+# BAM:
+#   Sorted and indexed BAM file to visualize.
+#
+# OUTDIR:
+#   Output directory for this sample.
+#
+# IGV_CMD:
+#   Path to the IGV shell script on your cluster.
+############################################################
+
+REFERENCE=/path/to/reference.fasta
+MAPDIR=/path/to/mapping_outputs
+OUTDIR=${MAPDIR}/${SAMPLE}
+
+BAM=${OUTDIR}/${SAMPLE}_aligned_reads_sorted_dup.bam
+
+BATCHDIR=/path/to/igv_batch_files
+IGV_CMD=/path/to/igv.sh
+
+mkdir -p "$BATCHDIR"
+
+
+############################################################
+# 6. Check required inputs
+############################################################
+
+if [ ! -f "$REFERENCE" ]; then
+    echo "Reference missing: $REFERENCE"
+    exit 1
+fi
+
+if [ ! -d "$OUTDIR" ]; then
+    echo "Output/mapping folder missing: $OUTDIR"
+    exit 0
+fi
+
+if [ ! -f "$BAM" ]; then
+    echo "BAM missing: $BAM"
+    exit 0
+fi
+
+if [ ! -f "${BAM}.bai" ]; then
+    echo "Indexing BAM..."
+    samtools index "$BAM"
+fi
+
+if [ ! -f "${REFERENCE}.fai" ]; then
+    echo "Indexing reference..."
+    samtools faidx "$REFERENCE"
+fi
+
+if [ ! -x "$IGV_CMD" ]; then
+    echo "IGV command is not executable: $IGV_CMD"
+    exit 1
+fi
+
+
+############################################################
+# 7. Define full reference region
+#
+# This uses the first sequence in the FASTA index.
+# For small references, this captures the full sequence.
+############################################################
+
+CHR=$(awk 'NR==1{print $1}' "${REFERENCE}.fai")
+LEN=$(awk 'NR==1{print $2}' "${REFERENCE}.fai")
+REGION="${CHR}:1-${LEN}"
+
+echo "Snapshot region: $REGION"
+
+
+############################################################
+# 8. Define temporary files
+############################################################
+
+TMP=${SAMPLE}_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}
+
+BATCH=${BATCHDIR}/${TMP}.igv.batch
+SVG=${OUTDIR}/${SAMPLE}.igv_snapshot.svg
+XVFB_LOG=${OUTDIR}/${TMP}.xvfb.log
+IGV_LOG=${OUTDIR}/${TMP}.igv.log
+
+rm -f "$SVG"
+
+
+############################################################
+# 9. Create IGV batch file
+#
+# Important settings:
+#   SAM.MAX_VISIBLE_RANGE:
+#     Allows IGV to show coverage over larger regions.
+#
+#   SAM.SHOW_SOFT_CLIPPED:
+#     Hides soft-clipped bases for cleaner screenshots.
+#
+#   squish:
+#     Compresses reads so the full region is visible.
+#
+#   maxPanelHeight:
+#     Gives IGV enough vertical space to render the track.
+############################################################
+
+cat > "$BATCH" <<EOF
+new
+genome $REFERENCE
+preference SAM.MAX_VISIBLE_RANGE 1000000
+preference SAM.SHOW_SOFT_CLIPPED false
+load $BAM
+snapshotDirectory $OUTDIR
+goto $REGION
+sort position
+squish
+maxPanelHeight 3000
+snapshot ${SAMPLE}.igv_snapshot.svg
+exit
+EOF
+
+
+############################################################
+# 10. Run IGV with manual Xvfb
+#
+# Manual Xvfb is used instead of xvfb-run because it gives
+# better control over display IDs and logs on some HPC systems.
+############################################################
+
+DISPLAY_NUM=$((1000 + SLURM_ARRAY_TASK_ID))
+export DISPLAY=":${DISPLAY_NUM}"
+
+echo "Starting Xvfb on display $DISPLAY"
+
+Xvfb "$DISPLAY" -screen 0 5000x1800x24 > "$XVFB_LOG" 2>&1 &
+XVFB_PID=$!
+
+sleep 5
+
+set +e
+"$IGV_CMD" -b "$BATCH" > "$IGV_LOG" 2>&1
+IGV_STATUS=$?
+set -e
+
+
+############################################################
+# 11. Stop Xvfb
+############################################################
+
+if kill -0 "$XVFB_PID" 2>/dev/null; then
+    kill "$XVFB_PID" 2>/dev/null || true
+fi
+
+
+############################################################
+# 12. Check output
+#
+# If IGV creates an SVG but coverage is hidden, the script
+# exits with code 2 so those samples can be rerun or inspected.
+############################################################
+
+if [ -s "$SVG" ]; then
+    if grep -qi "Zoom in to see coverage" "$SVG"; then
+        echo "SVG created, but coverage was not visible: $SAMPLE"
+        exit 2
+    else
+        echo "SVG created successfully: $SVG"
+        rm -f "$BATCH"
+        exit 0
+    fi
+else
+    echo "SVG failed for sample: $SAMPLE"
+    echo "IGV exit status: $IGV_STATUS"
+
+    echo "IGV log:"
+    cat "$IGV_LOG" || true
+
+    echo "Xvfb log:"
+    cat "$XVFB_LOG" || true
+
+    exit 1
+fi
