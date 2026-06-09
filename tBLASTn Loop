@@ -1,0 +1,280 @@
+#!/bin/bash
+#SBATCH --job-name=tblastn_panel
+#SBATCH -q primary
+#SBATCH -t 24:00:00
+#SBATCH -n 4
+#SBATCH --mem=30G
+#SBATCH --output=tblastn_panel_%j.out
+#SBATCH --error=tblastn_panel_%j.err
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=your_email@example.com
+
+set -euo pipefail
+
+###############################################################################
+# tblastn_panel_with_rescue.sh
+#
+# Purpose:
+#   Screen multiple genome assemblies for a panel of protein-coding genes using
+#   tblastn. If a gene is not detected in the first-pass BLAST output, the script
+#   automatically performs a relaxed single-gene rescue BLAST and records the
+#   result in an audit table.
+#
+# Expected assembly structure:
+#   ASSEMBLY_DIR/
+#     sample_1/
+#       sample_1_scaffolds.fasta
+#       or sample_1_contigs.fasta
+#       or scaffolds.fasta
+#       or contigs.fasta
+#     sample_2/
+#       ...
+#
+# Expected query format:
+#   A multi-FASTA protein file where each header exactly matches the gene names
+#   listed in GENES.
+#
+# Example query headers:
+#   >ND6
+#   >CYTB
+#   >COX2
+#   >COX3
+#   >ATP6
+#
+###############################################################################
+
+###############################################################################
+# 1. Load software
+###############################################################################
+
+module purge
+module load blast
+
+###############################################################################
+# 2. User-editable settings
+###############################################################################
+
+# Project/species/strain label used only for naming outputs.
+RUN_LABEL="example_species_or_strain"
+
+# Multi-FASTA protein query file.
+QUERY="/path/to/gene_panel_query.faa"
+
+# Directory containing one folder per sample assembly.
+ASSEMBLY_DIR="/path/to/assemblies"
+
+# Output file listing all detected sample folders.
+SAMPLE_LIST="/path/to/sample_list.txt"
+
+# Working directory for temporary BLAST databases and rescue files.
+# Keep this outside the assembly folders so database files do not clutter results.
+WORKROOT="/path/to/work/tblastn_${RUN_LABEL}"
+
+# Main BLAST settings.
+EVALUE_MAIN="1e-5"
+EVALUE_RESCUE="1e-2"
+THREADS="${SLURM_NTASKS:-4}"
+
+# Gene panel.
+# These names must exactly match the FASTA headers in QUERY, without the ">".
+GENES=(
+    ND6
+    CYTB
+    COX2
+    COX3
+    ATP6
+    NDUFS2
+    UQCRFS1
+    COX5
+    ATP2
+)
+
+###############################################################################
+# 3. Prepare output folders and audit file
+###############################################################################
+
+mkdir -p "$WORKROOT"
+
+AUDIT="$WORKROOT/${RUN_LABEL}_auto_rescue_audit.tsv"
+
+echo -e "sample\tgene\tmanual_blast_hits\tbest_evalue\tbest_bitscore\tbest_alignment_len\tbest_query_len\tcall" > "$AUDIT"
+
+###############################################################################
+# 4. Build sample list from assembly folders
+###############################################################################
+
+find "$ASSEMBLY_DIR" \
+    -mindepth 1 \
+    -maxdepth 1 \
+    -type d \
+    -printf "%f\n" | sort > "$SAMPLE_LIST"
+
+###############################################################################
+# 5. Process each sample
+###############################################################################
+
+while read -r SAMPLE; do
+    SAMPLE=$(echo "$SAMPLE" | tr -d '\r')
+    [ -z "$SAMPLE" ] && continue
+
+    echo "======================================"
+    echo "Processing sample: $SAMPLE"
+    echo "======================================"
+
+    ###########################################################################
+    # 5a. Locate assembly FASTA
+    ###########################################################################
+
+    ASM="$ASSEMBLY_DIR/$SAMPLE/${SAMPLE}_scaffolds.fasta"
+    [ -s "$ASM" ] || ASM="$ASSEMBLY_DIR/$SAMPLE/${SAMPLE}_contigs.fasta"
+    [ -s "$ASM" ] || ASM="$ASSEMBLY_DIR/$SAMPLE/scaffolds.fasta"
+    [ -s "$ASM" ] || ASM="$ASSEMBLY_DIR/$SAMPLE/contigs.fasta"
+
+    if [ ! -s "$ASM" ]; then
+        echo "Skipping $SAMPLE because no non-empty scaffolds/contigs FASTA was found."
+        continue
+    fi
+
+    ###########################################################################
+    # 5b. Set temporary and final output paths
+    ###########################################################################
+
+    WORK="$WORKROOT/${SAMPLE}_${SLURM_JOB_ID:-manual}"
+
+    rm -rf "$WORK"
+    mkdir -p "$WORK"
+
+    DB="$WORK/blast_db"
+
+    TMP_OUT="$WORK/${SAMPLE}.panel_vs_assembly.tblastn.tsv"
+
+    FINAL_OUT="$ASSEMBLY_DIR/${SAMPLE}.panel_vs_assembly.tblastn.tsv"
+
+    ###########################################################################
+    # 5c. Build nucleotide BLAST database from assembly
+    ###########################################################################
+
+    makeblastdb \
+        -in "$ASM" \
+        -dbtype nucl \
+        -out "$DB" \
+        > "$WORK/makeblastdb.log" 2>&1
+
+    ###########################################################################
+    # 5d. First-pass tblastn using full gene panel
+    ###########################################################################
+
+    tblastn \
+        -query "$QUERY" \
+        -db "$DB" \
+        -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore" \
+        -evalue "$EVALUE_MAIN" \
+        -seg no \
+        -num_threads "$THREADS" \
+        > "$TMP_OUT"
+
+    ###########################################################################
+    # 5e. Automatic relaxed-threshold rescue for genes missing from first pass
+    ###########################################################################
+
+    for GENE in "${GENES[@]}"; do
+
+        if grep -q "^${GENE}"$'\t' "$TMP_OUT"; then
+            continue
+        fi
+
+        echo "Initial BLAST did not detect $GENE in $SAMPLE. Running rescue BLAST."
+
+        GENE_QUERY="$WORK/${GENE}.faa"
+
+        awk -v GENE="$GENE" '
+            /^>/ {
+                keep = ($0 == ">" GENE)
+            }
+            keep
+        ' "$QUERY" > "$GENE_QUERY"
+
+        if [ ! -s "$GENE_QUERY" ]; then
+            echo "WARNING: Query for $GENE was not found in $QUERY."
+            echo -e "$SAMPLE\t$GENE\t0\tNA\tNA\tNA\tNA\tQUERY_NOT_FOUND" >> "$AUDIT"
+            continue
+        fi
+
+        RESCUE_OUT="$WORK/${SAMPLE}_${GENE}_rescue.tblastn.tsv"
+
+        tblastn \
+            -query "$GENE_QUERY" \
+            -db "$DB" \
+            -outfmt "6 qseqid sseqid pident length qlen qstart qend sstart send evalue bitscore" \
+            -evalue "$EVALUE_RESCUE" \
+            -seg no \
+            -max_target_seqs 20 \
+            -num_threads "$THREADS" \
+            > "$RESCUE_OUT"
+
+        hits=$(wc -l < "$RESCUE_OUT")
+
+        if [ "$hits" -eq 0 ]; then
+            echo -e "$SAMPLE\t$GENE\t0\tNA\tNA\tNA\tNA\tSTILL_NO_HIT" >> "$AUDIT"
+            continue
+        fi
+
+        best=$(sort -k11,11gr -k10,10g "$RESCUE_OUT" | head -n 1)
+
+        evalue=$(echo "$best" | awk '{print $10}')
+        bitscore=$(echo "$best" | awk '{print $11}')
+        alen=$(echo "$best" | awk '{print $4}')
+        qlen=$(echo "$best" | awk '{print $5}')
+
+        call=$(awk -v a="$alen" -v q="$qlen" 'BEGIN {
+            if (q > 0 && a / q >= 0.8) {
+                print "RECOVERED_NEAR_FULL"
+            } else {
+                print "RECOVERED_PARTIAL"
+            }
+        }')
+
+        echo -e "$SAMPLE\t$GENE\t$hits\t$evalue\t$bitscore\t$alen\t$qlen\t$call" >> "$AUDIT"
+
+        # Append the rescued best hit to the main output using the same
+        # 12-column format as the first-pass tblastn output.
+        echo "$best" | awk 'BEGIN {OFS="\t"} {
+            print $1, $2, $3, $4, "NA", "NA", $6, $7, $8, $9, $10, $11
+        }' >> "$TMP_OUT"
+
+    done
+
+    ###########################################################################
+    # 5f. Final missing-gene check
+    ###########################################################################
+
+    still_missing=0
+
+    for GENE in "${GENES[@]}"; do
+        if ! grep -q "^${GENE}"$'\t' "$TMP_OUT"; then
+            echo "WARNING: $SAMPLE still missing $GENE after rescue."
+            still_missing=$((still_missing + 1))
+        fi
+    done
+
+    ###########################################################################
+    # 5g. Sort and save final output
+    ###########################################################################
+
+    sort -k1,1 -k12,12gr "$TMP_OUT" > "$FINAL_OUT"
+
+    echo "Finished $SAMPLE; still_missing=$still_missing"
+
+    ###########################################################################
+    # 5h. Clean temporary files for this sample
+    ###########################################################################
+
+    rm -rf "$WORK"
+
+done < "$SAMPLE_LIST"
+
+echo "======================================"
+echo "Finished tblastn panel screening."
+echo "Run label: $RUN_LABEL"
+echo "Audit file: $AUDIT"
+echo "======================================"
