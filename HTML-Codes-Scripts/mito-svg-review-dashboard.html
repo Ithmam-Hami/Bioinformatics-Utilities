@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Mitochondrial Coverage Map Review</title>
+  <title>Coverage Map Review</title>
   <style>
     :root {
       color-scheme: light;
@@ -187,7 +187,7 @@
 <body>
   <header>
     <div class="title">
-      <h1>Mitochondrial Coverage Map Review</h1>
+      <h1>Coverage Map Review</h1>
       <div class="meta" id="meta">Load SVGs to begin</div>
     </div>
     <div class="toolbar">
@@ -232,7 +232,7 @@
     let urls = [];
     let current = 0;
     let calls = {};
-    const STORAGE_KEY = "mitochondrial_svg_review_dashboard_formal_calls_v1";
+    const STORAGE_KEY = "svg_coverage_map_review_calls_v1";
 
     const callClass = {
       ACCEPTABLE_COVERAGE: "acceptable",
@@ -358,7 +358,7 @@
       const blob = new Blob([lines.join("\n") + "\n"], { type: "text/tab-separated-values" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = "mitochondrial_coverage_map_review_calls.tsv";
+      a.download = "coverage_map_review_calls.tsv";
       document.body.append(a);
       a.click();
       setTimeout(() => {
