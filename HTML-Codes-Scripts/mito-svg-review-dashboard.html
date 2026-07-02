@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mitochondrial Coverage Map Review</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f5f2;
+      --panel: #ffffff;
+      --ink: #202124;
+      --muted: #646464;
+      --line: #d8d8d2;
+      --accent: #1f6feb;
+      --acceptable: #177245;
+      --review: #9a6700;
+      --exclude: #b42318;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 14px;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .title {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      min-width: 0;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .meta {
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    button, label.file {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--ink);
+      padding: 7px 10px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    button:hover, label.file:hover { border-color: #9a9a92; }
+    button.primary { border-color: var(--accent); color: var(--accent); }
+    input[type="file"] { display: none; }
+
+    main {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      min-height: calc(100vh - 54px);
+    }
+
+    aside {
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      overflow: auto;
+      max-height: calc(100vh - 54px);
+    }
+
+    .sample {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      padding: 8px 10px;
+      border-bottom: 1px solid #eeeeea;
+      cursor: pointer;
+    }
+
+    .sample:hover { background: #f7f7f5; }
+    .sample.active { background: #eaf2ff; }
+    .sample-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: Consolas, Monaco, monospace;
+      font-size: 12px;
+    }
+
+    .badge {
+      min-width: 72px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      color: #fff;
+      font-size: 11px;
+      text-align: center;
+    }
+
+    .badge.empty { background: #999; }
+    .badge.acceptable { background: var(--acceptable); }
+    .badge.review { background: var(--review); }
+    .badge.exclude { background: var(--exclude); }
+
+    .viewer {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .review {
+      display: grid;
+      grid-template-columns: auto auto auto minmax(160px, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfbf9;
+    }
+
+    .review button.acceptable { color: var(--acceptable); border-color: var(--acceptable); }
+    .review button.review { color: var(--review); border-color: var(--review); }
+    .review button.exclude { color: var(--exclude); border-color: var(--exclude); }
+
+    textarea {
+      width: 100%;
+      height: 34px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px;
+      font: inherit;
+    }
+
+    .frame-wrap {
+      overflow: auto;
+      background: #ecece7;
+      padding: 10px;
+    }
+
+    object {
+      display: block;
+      width: 100%;
+      min-height: calc(100vh - 128px);
+      border: 1px solid var(--line);
+      background: white;
+    }
+
+    .empty-state {
+      display: grid;
+      place-items: center;
+      height: calc(100vh - 128px);
+      color: var(--muted);
+      text-align: center;
+      padding: 24px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title">
+      <h1>Mitochondrial Coverage Map Review</h1>
+      <div class="meta" id="meta">Load SVGs to begin</div>
+    </div>
+    <div class="toolbar">
+      <label class="file">
+        Load SVGs
+        <input id="fileInput" type="file" accept=".svg,image/svg+xml" multiple>
+      </label>
+      <button id="prevBtn" title="Previous sample">Prev</button>
+      <button id="nextBtn" title="Next sample">Next</button>
+      <button id="exportBtn" class="primary" title="Export review calls as TSV">Export TSV</button>
+    </div>
+  </header>
+
+  <main>
+    <aside id="list"></aside>
+    <section class="viewer">
+      <div class="review">
+        <button class="acceptable" data-call="ACCEPTABLE_COVERAGE">A Acceptable Coverage</button>
+        <button class="review" data-call="REVIEW_REQUIRED">R Review Required</button>
+        <button class="exclude" data-call="EXCLUDE_FROM_ANALYSIS">E Exclude From Analysis</button>
+        <textarea id="note" placeholder="note for current sample"></textarea>
+        <button id="clearBtn">Clear</button>
+      </div>
+      <div class="frame-wrap" id="frameWrap">
+        <div class="empty-state">Choose SVG files from a local folder. Keyboard: A acceptable, R review, E exclude, arrows move.</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const fileInput = document.getElementById("fileInput");
+    const list = document.getElementById("list");
+    const frameWrap = document.getElementById("frameWrap");
+    const meta = document.getElementById("meta");
+    const note = document.getElementById("note");
+    const prevBtn = document.getElementById("prevBtn");
+    const nextBtn = document.getElementById("nextBtn");
+    const exportBtn = document.getElementById("exportBtn");
+    const clearBtn = document.getElementById("clearBtn");
+
+    let files = [];
+    let urls = [];
+    let current = 0;
+    let calls = {};
+    const STORAGE_KEY = "mitochondrial_svg_review_dashboard_formal_calls_v1";
+
+    const callClass = {
+      ACCEPTABLE_COVERAGE: "acceptable",
+      REVIEW_REQUIRED: "review",
+      EXCLUDE_FROM_ANALYSIS: "exclude"
+    };
+
+    function sampleName(file) {
+      return file.name.replace(/\.mito\.svg$/i, "").replace(/\.svg$/i, "");
+    }
+
+    function loadSavedCalls() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+        if (saved && typeof saved === "object") calls = saved;
+      } catch (_) {
+        calls = {};
+      }
+    }
+
+    function persistCalls() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(calls));
+    }
+
+    function renderList() {
+      list.innerHTML = "";
+      files.forEach((file, idx) => {
+        const name = sampleName(file);
+        const row = document.createElement("div");
+        row.className = "sample" + (idx === current ? " active" : "");
+        row.addEventListener("click", () => show(idx));
+
+        const left = document.createElement("div");
+        left.className = "sample-name";
+        left.textContent = name;
+
+        const badge = document.createElement("div");
+        const c = calls[name]?.call || "";
+        badge.className = "badge " + (c ? callClass[c] : "empty");
+        badge.textContent = c || "uncalled";
+
+        row.append(left, badge);
+        list.append(row);
+      });
+    }
+
+    function updateMeta() {
+      if (!files.length) {
+        meta.textContent = "Load SVGs to begin";
+        return;
+      }
+      const called = Object.values(calls).filter(x => x.call).length;
+      meta.textContent = `${current + 1}/${files.length} | called ${called}/${files.length} | ${sampleName(files[current])}`;
+    }
+
+    function show(idx) {
+      if (!files.length) return;
+      current = Math.max(0, Math.min(files.length - 1, idx));
+      const file = files[current];
+      const name = sampleName(file);
+
+      frameWrap.innerHTML = "";
+      const obj = document.createElement("object");
+      obj.type = "image/svg+xml";
+      obj.data = urls[current];
+      frameWrap.append(obj);
+
+      note.value = calls[name]?.note || "";
+      renderList();
+      updateMeta();
+    }
+
+    function setCall(call) {
+      if (!files.length) return;
+      const name = sampleName(files[current]);
+      calls[name] = { call, note: note.value.trim(), file: files[current].name };
+      persistCalls();
+      show(Math.min(current + 1, files.length - 1));
+    }
+
+    function saveNote() {
+      if (!files.length) return;
+      const name = sampleName(files[current]);
+      calls[name] = calls[name] || { call: "", file: files[current].name };
+      calls[name].note = note.value.trim();
+      persistCalls();
+      renderList();
+      updateMeta();
+    }
+
+    fileInput.addEventListener("change", () => {
+      urls.forEach(URL.revokeObjectURL);
+      files = Array.from(fileInput.files).sort((a, b) => a.name.localeCompare(b.name));
+      urls = files.map(file => URL.createObjectURL(file));
+      current = 0;
+      loadSavedCalls();
+      show(0);
+    });
+
+    document.querySelectorAll("[data-call]").forEach(button => {
+      button.addEventListener("click", () => setCall(button.dataset.call));
+    });
+
+    note.addEventListener("input", saveNote);
+    prevBtn.addEventListener("click", () => show(current - 1));
+    nextBtn.addEventListener("click", () => show(current + 1));
+    clearBtn.addEventListener("click", () => {
+      if (!files.length) return;
+      const name = sampleName(files[current]);
+      delete calls[name];
+      persistCalls();
+      note.value = "";
+      show(current);
+    });
+
+    exportBtn.addEventListener("click", () => {
+      const lines = ["sample\tfile\tcall\tnote"];
+      files.forEach(file => {
+        const name = sampleName(file);
+        const c = calls[name] || {};
+        lines.push([name, file.name, c.call || "", c.note || ""].map(x => String(x).replace(/\t/g, " ")).join("\t"));
+      });
+      const blob = new Blob([lines.join("\n") + "\n"], { type: "text/tab-separated-values" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "mitochondrial_coverage_map_review_calls.tsv";
+      document.body.append(a);
+      a.click();
+      setTimeout(() => {
+        URL.revokeObjectURL(a.href);
+        a.remove();
+      }, 1000);
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.target === note) return;
+      const key = event.key.toLowerCase();
+      if (key === "arrowleft") show(current - 1);
+      if (key === "arrowright") show(current + 1);
+      if (key === "a") setCall("ACCEPTABLE_COVERAGE");
+      if (key === "r") setCall("REVIEW_REQUIRED");
+      if (key === "e") setCall("EXCLUDE_FROM_ANALYSIS");
+    });
+  </script>
+</body>
+</html>
