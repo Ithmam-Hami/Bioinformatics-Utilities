@@ -7,6 +7,22 @@ end to end as its own panel. It is a fast visual check of library and mapping qu
 - **Even coverage:** a flat blue line near the chromosome's typical depth.
 - **Problems:** coverage sags, uneven libraries, aneuploid or missing chromosomes, mapping artifacts.
 
+## Example
+
+![Example coverage map](example_map.png)
+
+This is *Candida albicans* SC5314, public WGS run SRR4428735, mapped to the SC5314 reference. It shows what good
+data looks like:
+- **Flat lines:** every chromosome sits at ~140×.
+- **Even coverage:** 98.8% of screen columns are within 2-fold of the typical depth.
+- **No gaps:** no column is mostly uncovered.
+
+The few short dips and spikes are repeated sequences such as rDNA, telomeric repeats and transposons, which every
+sample shows. The full-resolution output is [`example_map.svg`](example_map.svg).
+
+A problem library looks different: lines that sag in the middle of large chromosomes, chromosomes at very different
+depths, or runs of red ticks.
+
 ## What the map shows
 
 | Element | Meaning |
