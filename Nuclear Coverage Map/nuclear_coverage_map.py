@@ -17,7 +17,7 @@
 #     red line     a marked gene, labelled "gene depth (ratio to the median gene depth)"
 #   Zoom panels (one per marked gene): the gene +/- --zoom-flank bp at base resolution -
 #     blue line = depth with mapping quality >= --min-mapq;  grey line = depth with all reads (a gap between the two
-#     = reads lost to low mapping quality);  red boxes = the gene's pieces from the BED (e.g. coding exons);
+#     = reads lost to low mapping quality);  red boxes = the gene's exons (its lines in the BED);
 #     dashed line = median gene depth;  orange line = share of reads with mapping quality >= --min-mapq
 #
 # OUTPUTS
@@ -198,7 +198,7 @@ def legend(items, x, y):
 keys = [("line", BLUE, "median depth"), ("band", BAND, "10th-90th percentile depth"),
         ("tick", RED, "&gt;50% of bases at 0 reads"), ("line", ORANGE, "share of reads with MAPQ %s %d" % (GE, a.min_mapq))]
 if marked:
-    keys.append(("gene", GENE, ("gene" if a.mark_all else "low-coverage gene") + " (depth, ratio to %.0fx)" % med_gene))
+    keys.append(("gene", GENE, "gene" if a.mark_all else "low-coverage gene (ratio to median depth &lt; %g)" % a.flag_ratio))
 legend(keys, 145, 52)
 
 tsv = open(a.out_tsv, "w")
@@ -249,7 +249,7 @@ if zdata:
     svg.append('<text x="15" y="%d" class="title">%s, +/- %s kb</text>'
                % (ztop + 18, "Marked genes" if a.mark_all else "Low-coverage genes", format(a.zoom_flank / 1000, "g")))
     legend([("line", BLUE, "depth, MAPQ %s %d" % (GE, a.min_mapq)), ("line", GREY, "depth, all reads"),
-            ("box", GENE, "gene pieces (BED)"), ("dash", "#5f5e5a", "median gene depth (%.0fx)" % med_gene),
+            ("box", GENE, "exons"),("dash", "#5f5e5a", "median gene depth (%.0fx)" % med_gene),
             ("line", ORANGE, "share of reads with MAPQ %s %d" % (GE, a.min_mapq))], 330, ztop + 13)
 for n_i, (name, c, s, e, z0, z1, dq, da) in enumerate(zdata):
     x0 = 40 + (n_i % ZCOLS) * (ZW + 15)

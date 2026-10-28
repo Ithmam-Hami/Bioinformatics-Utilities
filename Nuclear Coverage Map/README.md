@@ -1,11 +1,15 @@
 # Nuclear Coverage Map
 
-`nuclear_coverage_map.py` draws a whole-genome read-coverage map from a BAM file as one SVG: every chromosome is drawn
-end to end as its own panel. It is a fast visual check of library and mapping quality.
+`nuclear_coverage_map.py` draws a whole-genome read-coverage map for **one sample** (one BAM) as one SVG: every
+chromosome is drawn end to end as its own panel. It is a fast visual check of library and mapping quality.
 
 Optionally, it marks genes of interest from a BED file. It flags the ones with low coverage and draws a
 base-resolution zoom panel for each one. The zoom shows whether a low gene is a real local dip, part of a low region,
 a mapping-quality problem, or just ordinary unevenness of short-read coverage.
+
+**Made to adapt to your own data:** any species and reference, your own genes (any BED), and your own settings. The
+coverage thresholds, mapping and base quality, duplicate handling, zoom width and minimum chromosome length are all
+command-line options (see [Usage](#usage)). Nothing needs to be edited in the code.
 
 **What it shows:**
 - **Even coverage:** a flat blue line near the chromosome's typical depth.
@@ -46,7 +50,7 @@ The full-resolution output is [`example_map.svg`](example_map.svg).
 | Pale band | 10th–90th percentile of depth in that column |
 | Red tick | Column where more than half the bases have no reads |
 | Orange line (strip under each chromosome) | Share of reads with mapping quality ≥ `--min-mapq`; top of the strip = 100% |
-| Red vertical line + label | A marked gene: its depth and its ratio to the median gene depth |
+| Red vertical line + label | A low-coverage gene (ratio to median gene depth below `--flag-ratio`, and depth below `--flag-depth`), labelled with its depth and that ratio |
 | Number under the chromosome name | Its typical (median) depth; each panel has its own y scale |
 
 **Zoom panels (one per marked gene)**
@@ -55,7 +59,7 @@ The full-resolution output is [`example_map.svg`](example_map.svg).
 |---|---|
 | Blue line | Depth from reads with mapping quality ≥ `--min-mapq` |
 | Grey line | Depth from all reads; a gap between grey and blue = reads lost to low mapping quality |
-| Red boxes | The gene's pieces from the BED (e.g. coding exons) |
+| Red boxes | The gene's exons (its lines in the BED) |
 | Dashed line | Median gene depth |
 | Orange line | Share of reads with mapping quality ≥ `--min-mapq` |
 
@@ -74,7 +78,7 @@ python3 nuclear_coverage_map.py sample.bam sample.svg sample.tsv "Sample | speci
 | Option | Default | Meaning |
 |---|---|---|
 | `--skip CONTIG` | none | Leave out one sequence, e.g. the mitochondrial contig of a whole-genome BAM, so its very high depth does not dominate |
-| `--genes BED` | none | Genes to measure: `contig, start, end, name`; lines with the same name form one gene (e.g. exons). Gene depth = median depth over its bases |
+| `--genes BED` | none | Your genes: `contig, start, end, name`, one line per exon; lines with the same name form one gene. Gene depth = median depth over its exons |
 | `--flag-depth` | `20` | Mark a gene when its depth is below this ... |
 | `--flag-ratio` | `0.6` | ... and below this fraction of the median gene depth |
 | `--mark-all` | off | Mark every gene in the BED instead of only the low ones |
